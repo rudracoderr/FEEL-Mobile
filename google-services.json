@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "282240133835",
+    "project_id": "feeeel-2ff59",
+    "storage_bucket": "feeeel-2ff59.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:282240133835:android:3543a959aad560b0b9c94e",
+        "android_client_info": {
+          "package_name": "com.feeeel.rescue"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBeMBGt9rnaxuv1MC5Fx5-Tqbs9PZwqzGY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

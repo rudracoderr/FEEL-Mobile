@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "mobile-app",
+    "slug": "mobile-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.feeeel.rescue",
+      "googleServicesFile": "./google-services.json",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-notifications",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "FEEL Rescue needs access to your photos so you can attach report images.",
+          "cameraPermission": "FEEL Rescue needs access to your camera so you can capture report images."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "ed6b193d-05e5-43e9-b978-3d57ad8d7fd8"
+      }
+    }
+  }
+}
