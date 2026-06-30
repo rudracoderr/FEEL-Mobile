@@ -23,10 +23,14 @@ import { auth } from '../firebase';
 import { BACKEND_BASE_URL, UnauthenticatedError, fetchPublicWithTimeout, fetchWithTimeout } from '../apiClient';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
+import LoadingOverlay from '../components/ui/LoadingOverlay';
+import StatusModal from '../components/ui/StatusModal';
 import SectionHeader from '../components/ui/SectionHeader';
 import SeverityBadge from '../components/ui/SeverityBadge';
 import StatusBadge from '../components/ui/StatusBadge';
 import LoadingState from '../components/ui/LoadingState';
+import { normalizeApiError } from '../utils/apiErrorHandler';
+import { normalizeDeviceError } from '../utils/deviceErrorHandler';
 import { colors, radius, spacing, typography } from '../theme';
 
 const CLOUDINARY_CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME || '';
@@ -111,6 +115,46 @@ function getTimeAgo(timestamp) {
   return `${diffDays}d ago`;
 }
 
+function getReportErrorModalType(errorType) {
+  switch (errorType) {
+    case 'bad_request':
+    case 'unauthorized':
+    case 'forbidden':
+    case 'not_found':
+    case 'rate_limited':
+      return 'warning';
+    case 'network':
+    case 'timeout':
+    case 'server_error':
+    case 'unknown_error':
+    default:
+      return 'error';
+  }
+}
+
+function getReportErrorMessage(errorType) {
+  switch (errorType) {
+    case 'bad_request':
+      return 'Please check the form details and try again.';
+    case 'unauthorized':
+      return 'Please sign in again and retry the report submission.';
+    case 'forbidden':
+      return 'You do not have permission to submit this report.';
+    case 'not_found':
+      return 'The report could not be submitted right now.';
+    case 'rate_limited':
+      return 'Please wait a moment before submitting another report.';
+    case 'server_error':
+      return 'Something went wrong on our side. Please try again soon.';
+    case 'network':
+      return 'Please check your internet connection and try again.';
+    case 'timeout':
+      return 'The request took too long. Please try again.';
+    default:
+      return 'Something went wrong. Please try again.';
+  }
+}
+
 export default function HomeScreen({ currentUserProfile }) {
   const navigation = useNavigation();
   const [firebaseUser, setFirebaseUser] = useState(null);
@@ -137,8 +181,23 @@ export default function HomeScreen({ currentUserProfile }) {
   const [reportAddress, setReportAddress] = useState('');
   const [locationLoading, setLocationLoading] = useState(false);
   const [locationError, setLocationError] = useState('');
+  const [reportFeedbackVisible, setReportFeedbackVisible] = useState(false);
+  const [reportFeedback, setReportFeedback] = useState({
+    type: 'info',
+    title: '',
+    message: '',
+  });
   // Track which image was taken with the camera so we can offer Retake
   const lastCameraUri = useRef(null);
+
+  const closeReportFeedback = () => {
+    setReportFeedbackVisible(false);
+  };
+
+  const openReportFeedback = (feedback) => {
+    setReportFeedback(feedback);
+    setReportFeedbackVisible(true);
+  };
 
   const loadReports = async () => {
     try {
@@ -305,9 +364,10 @@ export default function HomeScreen({ currentUserProfile }) {
       setReportAddress(readableAddress || `Lat ${latitude.toFixed(5)}, Lng ${longitude.toFixed(5)}`);
     } catch (error) {
       console.error('Failed to load report location:', error);
+      const deviceError = normalizeDeviceError(error, { source: 'location' });
       setReportLocation(null);
       setReportAddress('');
-      setLocationError(error.message);
+      setLocationError(deviceError.message);
     } finally {
       setLocationLoading(false);
     }
@@ -339,10 +399,8 @@ export default function HomeScreen({ currentUserProfile }) {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
-          'Camera permission needed',
-          'Please allow camera access so you can take a photo for the report.'
-        );
+        const deviceError = normalizeDeviceError({ code: 'CAMERA_PERMISSION_DENIED' }, { source: 'camera' });
+        Alert.alert(deviceError.title, deviceError.message);
         return;
       }
 
@@ -365,7 +423,8 @@ export default function HomeScreen({ currentUserProfile }) {
       });
     } catch (error) {
       console.error('Camera failed:', error);
-      Alert.alert('Camera error', error.message);
+      const deviceError = normalizeDeviceError(error, { source: 'camera' });
+      Alert.alert(deviceError.title, deviceError.message);
     }
   };
 
@@ -374,7 +433,8 @@ export default function HomeScreen({ currentUserProfile }) {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Permission needed', 'Please allow photo access so you can attach report images.');
+        const deviceError = normalizeDeviceError({ code: 'GALLERY_PERMISSION_DENIED' }, { source: 'gallery' });
+        Alert.alert(deviceError.title, deviceError.message);
         return;
       }
 
@@ -398,7 +458,8 @@ export default function HomeScreen({ currentUserProfile }) {
       });
     } catch (error) {
       console.error('Image picking failed:', error);
-      Alert.alert('Image selection failed', error.message);
+      const deviceError = normalizeDeviceError(error, { source: 'gallery' });
+      Alert.alert(deviceError.title, deviceError.message);
     }
   };
 
@@ -423,12 +484,20 @@ export default function HomeScreen({ currentUserProfile }) {
   const handleSubmitReport = async (formData) => {
     console.log("FORM SUBMITTED");
     if (!selectedImages.length) {
-      Alert.alert('Missing images', 'Please add at least one image to your report.');
+      openReportFeedback({
+        type: 'warning',
+        title: 'Missing Images',
+        message: 'Please add at least one image to your report.',
+      });
       return;
     }
 
     if (!reportLocation || !Array.isArray(reportLocation.coordinates)) {
-      Alert.alert('Missing location', 'Please refresh location before submitting your report.');
+      openReportFeedback({
+        type: 'warning',
+        title: 'Missing Location',
+        message: 'Please refresh location before submitting your report.',
+      });
       return;
     }
 
@@ -456,21 +525,42 @@ export default function HomeScreen({ currentUserProfile }) {
       });
       const responseText = await response.text();
 
-      if (response.status === 429) {
-        Alert.alert('Please wait', 'Please wait before creating another rescue report.');
-        return;
-      }
-
       if (!response.ok) {
-        throw new Error(responseText || `Failed to submit report (${response.status})`);
+        let responseData = null;
+
+        if (responseText) {
+          try {
+            responseData = JSON.parse(responseText);
+          } catch {
+            responseData = responseText;
+          }
+        }
+
+        throw {
+          message: typeof responseData === 'string' ? responseData : responseData?.message || responseData?.error || responseText,
+          status: response.status,
+          responseData,
+        };
       }
 
-      Alert.alert('Report submitted', 'Your rescue report is now visible to nearby volunteers.');
+      openReportFeedback({
+        type: 'success',
+        title: 'Report Submitted',
+        message: 'Your rescue report is now visible to nearby volunteers.',
+      });
       resetReportForm();
       await loadReports();
     } catch (error) {
       console.error('Report submission failed:', error);
-      Alert.alert('Report failed', error.message);
+      const normalizedError = normalizeApiError(error, {
+        fallbackMessage: error?.message || 'Please try again.',
+      });
+
+      openReportFeedback({
+        type: getReportErrorModalType(normalizedError.type),
+        title: normalizedError.title || 'Report Failed',
+        message: getReportErrorMessage(normalizedError.type),
+      });
     } finally {
       setReportSubmitting(false);
     }
@@ -486,6 +576,23 @@ export default function HomeScreen({ currentUserProfile }) {
 
   return (
     <View style={styles.screen}>
+      <LoadingOverlay
+        visible={reportSubmitting}
+        title="Submitting Report"
+        message="Please wait while we send your rescue report."
+      />
+      <StatusModal
+        visible={reportFeedbackVisible}
+        type={reportFeedback.type}
+        title={reportFeedback.title}
+        message={reportFeedback.message}
+        primaryButton={{
+          label: 'OK',
+          onPress: closeReportFeedback,
+          variant: 'primary',
+        }}
+        onRequestClose={closeReportFeedback}
+      />
       <ScrollView
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
@@ -804,9 +911,8 @@ export default function HomeScreen({ currentUserProfile }) {
             ) : null}
 
             <Button
-              label={reportSubmitting ? 'Submitting...' : 'Submit Report'}
+              label="Submit Report"
               onPress={() => submitReportForm(handleSubmitReport)()}
-              loading={reportSubmitting}
               disabled={reportSubmitting || locationLoading || !reportLocation}
               style={styles.submitButton}
             />
