@@ -1,21 +1,116 @@
 import { useState } from 'react';
-import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
+import LoadingOverlay from '../components/ui/LoadingOverlay';
+import StatusModal from '../components/ui/StatusModal';
+import { normalizeApiError } from '../utils/apiErrorHandler';
+import { normalizeDeviceError } from '../utils/deviceErrorHandler';
+
+function normalizeSignupError(error) {
+  const code = String(error?.code || '').toLowerCase();
+
+  switch (code) {
+    case 'auth/email-already-in-use':
+      return {
+        type: 'warning',
+        title: 'Email Already In Use',
+        message: 'An account with this email already exists.',
+      };
+    case 'auth/weak-password':
+      return {
+        type: 'warning',
+        title: 'Weak Password',
+        message: 'Please choose a stronger password.',
+      };
+    case 'auth/invalid-email':
+      return {
+        type: 'warning',
+        title: 'Invalid Email',
+        message: 'Please enter a valid email address.',
+      };
+    case 'auth/network-request-failed':
+      return {
+        type: 'error',
+        title: 'No Internet Connection',
+        message: 'No internet connection.',
+      };
+    case 'auth/too-many-requests':
+      return {
+        type: 'warning',
+        title: 'Too Many Attempts',
+        message: 'Too many signup attempts. Please try again later.',
+      };
+    case 'auth/operation-not-allowed':
+      return {
+        type: 'error',
+        title: 'Signup Disabled',
+        message: 'Creating new accounts is currently disabled.',
+      };
+    case 'auth/internal-error':
+      return {
+        type: 'error',
+        title: 'Signup Failed',
+        message: 'Unable to create your account right now. Please try again.',
+      };
+    default: {
+      const deviceLikeError = normalizeDeviceError(error, {
+        source: 'signup',
+        fallbackMessage: '',
+      });
+
+      if (deviceLikeError?.type && deviceLikeError.type !== 'unknown_device_error') {
+        return {
+          type: 'error',
+          title: deviceLikeError.title,
+          message: deviceLikeError.message,
+        };
+      }
+
+      const apiLikeError = normalizeApiError(null, {
+        fallbackMessage: 'Unable to create your account right now. Please try again.',
+      });
+
+      return {
+        type: 'error',
+        title: apiLikeError.title || 'Signup Failed',
+        message: apiLikeError.message || 'Unable to create your account right now. Please try again.',
+      };
+    }
+  }
+}
 
 export default function SignupScreen({ onSwitchToLogin, onSignupStart, onSignupSuccess, onSignupCancel }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [feedbackVisible, setFeedbackVisible] = useState(false);
+  const [feedback, setFeedback] = useState({
+    type: 'info',
+    title: '',
+    message: '',
+  });
+
+  const openFeedback = (nextFeedback) => {
+    setFeedback(nextFeedback);
+    setFeedbackVisible(true);
+  };
+
+  const closeFeedback = () => {
+    setFeedbackVisible(false);
+  };
 
   const handleSignup = async () => {
     if (!email.trim() || !password) {
-      Alert.alert('Missing fields', 'Please enter your email and password.');
+      openFeedback({
+        type: 'warning',
+        title: 'Missing Fields',
+        message: 'Please enter your email and password.',
+      });
       return;
     }
 
     setLoading(true);
-    let signupSucceeded = false;
     try {
       onSignupStart?.();
 
@@ -28,21 +123,37 @@ export default function SignupScreen({ onSwitchToLogin, onSignupStart, onSignupS
         email: user.email,
       });
 
-      signupSucceeded = true;
+      openFeedback({
+        type: 'success',
+        title: 'Success',
+        message: 'Account created successfully.',
+      });
     } catch (error) {
-      onSignupCancel?.();
-      Alert.alert('Signup failed', error.message);
+      openFeedback(normalizeSignupError(error));
     } finally {
-      if (!signupSucceeded) {
-        onSignupCancel?.();
-      }
-
       setLoading(false);
     }
   };
 
   return (
     <View style={styles.container}>
+      <LoadingOverlay
+        visible={loading}
+        title="Creating Account"
+        message="Please wait while we set up your account."
+      />
+      <StatusModal
+        visible={feedbackVisible}
+        type={feedback.type}
+        title={feedback.title}
+        message={feedback.message}
+        primaryButton={{
+          label: 'OK',
+          onPress: closeFeedback,
+          variant: 'primary',
+        }}
+        onRequestClose={closeFeedback}
+      />
       <View style={styles.hero}>
         <Text style={styles.kicker}>FEEL Rescue</Text>
         <Text style={styles.title}>Create Account</Text>
@@ -74,7 +185,7 @@ export default function SignupScreen({ onSwitchToLogin, onSignupStart, onSignupS
         onPress={handleSignup}
         disabled={loading}
       >
-        <Text style={styles.buttonText}>{loading ? 'Creating account...' : 'Sign Up'}</Text>
+        <Text style={styles.buttonText}>Sign Up</Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={onSwitchToLogin} disabled={loading}>

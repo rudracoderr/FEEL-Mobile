@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Modal,
   RefreshControl,
@@ -28,7 +27,6 @@ import StatusModal from '../components/ui/StatusModal';
 import SectionHeader from '../components/ui/SectionHeader';
 import SeverityBadge from '../components/ui/SeverityBadge';
 import StatusBadge from '../components/ui/StatusBadge';
-import LoadingState from '../components/ui/LoadingState';
 import { normalizeApiError } from '../utils/apiErrorHandler';
 import { normalizeDeviceError } from '../utils/deviceErrorHandler';
 import { colors, radius, spacing, typography } from '../theme';
@@ -155,6 +153,18 @@ function getReportErrorMessage(errorType) {
   }
 }
 
+function getApiErrorModalType(apiErrorType) {
+  switch (apiErrorType) {
+    case 'network':
+    case 'timeout':
+    case 'server_error':
+    case 'unknown_error':
+      return 'error';
+    default:
+      return 'warning';
+  }
+}
+
 export default function HomeScreen({ currentUserProfile }) {
   const navigation = useNavigation();
   const [firebaseUser, setFirebaseUser] = useState(null);
@@ -181,8 +191,8 @@ export default function HomeScreen({ currentUserProfile }) {
   const [reportAddress, setReportAddress] = useState('');
   const [locationLoading, setLocationLoading] = useState(false);
   const [locationError, setLocationError] = useState('');
-  const [reportFeedbackVisible, setReportFeedbackVisible] = useState(false);
-  const [reportFeedback, setReportFeedback] = useState({
+  const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [statusModalConfig, setStatusModalConfig] = useState({
     type: 'info',
     title: '',
     message: '',
@@ -190,13 +200,13 @@ export default function HomeScreen({ currentUserProfile }) {
   // Track which image was taken with the camera so we can offer Retake
   const lastCameraUri = useRef(null);
 
-  const closeReportFeedback = () => {
-    setReportFeedbackVisible(false);
+  const closeStatusModal = () => {
+    setStatusModalVisible(false);
   };
 
-  const openReportFeedback = (feedback) => {
-    setReportFeedback(feedback);
-    setReportFeedbackVisible(true);
+  const openStatusModal = (config) => {
+    setStatusModalConfig(config);
+    setStatusModalVisible(true);
   };
 
   const loadReports = async () => {
@@ -272,7 +282,26 @@ export default function HomeScreen({ currentUserProfile }) {
         }
       } catch (error) {
         console.error('Failed to load home data:', error);
-        if (isMounted) setBackendUser(currentUserProfile || null);
+        if (isMounted) {
+          setBackendUser(currentUserProfile || null);
+          const apiError = normalizeApiError(error, { fallbackMessage: 'Failed to load your dashboard.' });
+          openStatusModal({
+            type: getApiErrorModalType(apiError.type),
+            title: apiError.title,
+            message: apiError.message,
+            primaryButton: {
+              ...apiError.primaryAction,
+              onPress: apiError.primaryAction?.label === 'Try Again' ? () => {
+                closeStatusModal();
+                refreshHome();
+              } : closeStatusModal,
+            },
+            secondaryButton: apiError.secondaryAction ? {
+              ...apiError.secondaryAction,
+              onPress: closeStatusModal,
+            } : undefined,
+          });
+        }
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -308,6 +337,23 @@ export default function HomeScreen({ currentUserProfile }) {
     } catch (error) {
       if (error instanceof UnauthenticatedError) return; // logout — suppress
       console.error('Failed to refresh home:', error);
+      const apiError = normalizeApiError(error, { fallbackMessage: 'Failed to refresh your dashboard.' });
+      openStatusModal({
+        type: getApiErrorModalType(apiError.type),
+        title: apiError.title,
+        message: apiError.message,
+        primaryButton: {
+          ...apiError.primaryAction,
+          onPress: apiError.primaryAction?.label === 'Try Again' ? () => {
+            closeStatusModal();
+            refreshHome();
+          } : closeStatusModal,
+        },
+        secondaryButton: apiError.secondaryAction ? {
+          ...apiError.secondaryAction,
+          onPress: closeStatusModal,
+        } : undefined,
+      });
     } finally {
       setRefreshing(false);
     }
@@ -400,7 +446,11 @@ export default function HomeScreen({ currentUserProfile }) {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
         const deviceError = normalizeDeviceError({ code: 'CAMERA_PERMISSION_DENIED' }, { source: 'camera' });
-        Alert.alert(deviceError.title, deviceError.message);
+        openStatusModal({
+          type: 'warning',
+          title: deviceError.title,
+          message: deviceError.message,
+        });
         return;
       }
 
@@ -424,7 +474,11 @@ export default function HomeScreen({ currentUserProfile }) {
     } catch (error) {
       console.error('Camera failed:', error);
       const deviceError = normalizeDeviceError(error, { source: 'camera' });
-      Alert.alert(deviceError.title, deviceError.message);
+      openStatusModal({
+        type: 'error',
+        title: deviceError.title,
+        message: deviceError.message,
+      });
     }
   };
 
@@ -434,7 +488,11 @@ export default function HomeScreen({ currentUserProfile }) {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
         const deviceError = normalizeDeviceError({ code: 'GALLERY_PERMISSION_DENIED' }, { source: 'gallery' });
-        Alert.alert(deviceError.title, deviceError.message);
+        openStatusModal({
+          type: 'warning',
+          title: deviceError.title,
+          message: deviceError.message,
+        });
         return;
       }
 
@@ -459,7 +517,11 @@ export default function HomeScreen({ currentUserProfile }) {
     } catch (error) {
       console.error('Image picking failed:', error);
       const deviceError = normalizeDeviceError(error, { source: 'gallery' });
-      Alert.alert(deviceError.title, deviceError.message);
+      openStatusModal({
+        type: 'error',
+        title: deviceError.title,
+        message: deviceError.message,
+      });
     }
   };
 
@@ -484,7 +546,7 @@ export default function HomeScreen({ currentUserProfile }) {
   const handleSubmitReport = async (formData) => {
     console.log("FORM SUBMITTED");
     if (!selectedImages.length) {
-      openReportFeedback({
+      openStatusModal({
         type: 'warning',
         title: 'Missing Images',
         message: 'Please add at least one image to your report.',
@@ -493,7 +555,7 @@ export default function HomeScreen({ currentUserProfile }) {
     }
 
     if (!reportLocation || !Array.isArray(reportLocation.coordinates)) {
-      openReportFeedback({
+      openStatusModal({
         type: 'warning',
         title: 'Missing Location',
         message: 'Please refresh location before submitting your report.',
@@ -543,7 +605,7 @@ export default function HomeScreen({ currentUserProfile }) {
         };
       }
 
-      openReportFeedback({
+      openStatusModal({
         type: 'success',
         title: 'Report Submitted',
         message: 'Your rescue report is now visible to nearby volunteers.',
@@ -553,10 +615,10 @@ export default function HomeScreen({ currentUserProfile }) {
     } catch (error) {
       console.error('Report submission failed:', error);
       const normalizedError = normalizeApiError(error, {
-        fallbackMessage: error?.message || 'Please try again.',
+        fallbackMessage: 'Please try again.',
       });
 
-      openReportFeedback({
+      openStatusModal({
         type: getReportErrorModalType(normalizedError.type),
         title: normalizedError.title || 'Report Failed',
         message: getReportErrorMessage(normalizedError.type),
@@ -566,32 +628,27 @@ export default function HomeScreen({ currentUserProfile }) {
     }
   };
 
-  if (loading) {
-    return (
-      <View style={styles.screen}>
-        <LoadingState message="Loading your rescue dashboard..." />
-      </View>
-    );
-  }
-
   return (
     <View style={styles.screen}>
       <LoadingOverlay
-        visible={reportSubmitting}
-        title="Submitting Report"
-        message="Please wait while we send your rescue report."
+        visible={loading || reportSubmitting}
+        title={loading ? "Loading Dashboard" : "Submitting Report"}
+        message={loading ? "Please wait while we load rescue reports." : "Please wait while we send your rescue report."}
       />
       <StatusModal
-        visible={reportFeedbackVisible}
-        type={reportFeedback.type}
-        title={reportFeedback.title}
-        message={reportFeedback.message}
-        primaryButton={{
-          label: 'OK',
-          onPress: closeReportFeedback,
-          variant: 'primary',
-        }}
-        onRequestClose={closeReportFeedback}
+        visible={statusModalVisible}
+        type={statusModalConfig.type}
+        title={statusModalConfig.title}
+        message={statusModalConfig.message}
+        primaryButton={
+          statusModalConfig.primaryButton || {
+            label: 'OK',
+            onPress: closeStatusModal,
+            variant: 'primary',
+          }
+        }
+        secondaryButton={statusModalConfig.secondaryButton}
+        onRequestClose={closeStatusModal}
       />
       <ScrollView
         contentContainerStyle={styles.container}
@@ -662,8 +719,8 @@ export default function HomeScreen({ currentUserProfile }) {
             </Card>
           ) : (
             <Card style={styles.featuredCard}>
-              <Text style={styles.emptyTitle}>All quiet right now</Text>
-              <Text style={styles.emptyText}>When a nearby animal needs immediate help, it will appear here.</Text>
+              <Text style={styles.emptyTitle}>No rescue reports nearby.</Text>
+              <Text style={styles.emptyText}>Be the first to report an animal in your area.</Text>
             </Card>
           )}
 
@@ -675,14 +732,22 @@ export default function HomeScreen({ currentUserProfile }) {
               onPress={() => {
                 if (!firebaseUser) {
                   // Guest: prompt to sign in before creating a report.
-                  Alert.alert(
-                    'Sign in required',
-                    'Please sign in to report an animal in distress.',
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Sign In', onPress: () => navigation.navigate('Login') },
-                    ]
-                  );
+                  openStatusModal({
+                    type: 'info',
+                    title: 'Sign in required',
+                    message: 'Please sign in to report an animal in distress.',
+                    primaryButton: {
+                      label: 'Sign In',
+                      onPress: () => {
+                        closeStatusModal();
+                        navigation.navigate('Login');
+                      },
+                    },
+                    secondaryButton: {
+                      label: 'Cancel',
+                      onPress: closeStatusModal,
+                    },
+                  });
                   return;
                 }
                 setReportModalVisible(true);

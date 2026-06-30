@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Dimensions,
   FlatList,
   Modal,
@@ -19,7 +18,9 @@ import { BACKEND_BASE_URL, UnauthenticatedError, fetchPublicWithTimeout, fetchWi
 import RescueCard from '../components/RescueCard';
 import RescueDetailsModal from '../components/RescueDetailsModal';
 import EmptyState from '../components/ui/EmptyState';
-import LoadingState from '../components/ui/LoadingState';
+import LoadingOverlay from '../components/ui/LoadingOverlay';
+import StatusModal from '../components/ui/StatusModal';
+import { normalizeApiError } from '../utils/apiErrorHandler';
 import { colors, radius, spacing, typography } from '../theme';
 
 const FILTERS = ['pending', 'accepted', 'resolved'];
@@ -95,6 +96,19 @@ export default function RescueFeedScreen() {
   const [userLocation, setUserLocation] = useState(null); // { latitude, longitude }
   const horizontalScrollRef = useRef(null);
 
+  const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [statusModalConfig, setStatusModalConfig] = useState({
+    type: 'info',
+    title: '',
+    message: '',
+  });
+
+  const closeStatusModal = () => setStatusModalVisible(false);
+  const openStatusModal = (config) => {
+    setStatusModalConfig(config);
+    setStatusModalVisible(true);
+  };
+
   useEffect(() => {
     let isMounted = true;
 
@@ -161,7 +175,23 @@ export default function RescueFeedScreen() {
         return;
       }
       console.error('Failed to fetch rescue reports:', error);
-      Alert.alert('Failed', 'Could not load rescue feed');
+      const apiError = normalizeApiError(error, { fallbackMessage: 'Could not load rescue feed' });
+      openStatusModal({
+        type: 'error',
+        title: apiError.title,
+        message: apiError.message,
+        primaryButton: {
+          ...apiError.primaryAction,
+          onPress: apiError.primaryAction?.label === 'Try Again' ? () => {
+            closeStatusModal();
+            onRefresh();
+          } : closeStatusModal,
+        },
+        secondaryButton: apiError.secondaryAction ? {
+          ...apiError.secondaryAction,
+          onPress: closeStatusModal,
+        } : undefined,
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -170,7 +200,11 @@ export default function RescueFeedScreen() {
 
   const handleAcceptReport = async (report) => {
     if (!currentFirebaseUser?.uid) {
-      Alert.alert('Sign in required', 'Please sign in again to accept this rescue.');
+      openStatusModal({
+        type: 'warning',
+        title: 'Sign in required',
+        message: 'Please sign in again to accept this rescue.',
+      });
       return;
     }
 
@@ -184,7 +218,11 @@ export default function RescueFeedScreen() {
       const data = await response.json();
 
       if (response.status === 409 || data?.success === false) {
-        Alert.alert('Unable to accept', rescueAlreadyClaimedMessage);
+        openStatusModal({
+          type: 'warning',
+          title: 'Unable to accept',
+          message: rescueAlreadyClaimedMessage,
+        });
         return;
       }
 
@@ -200,13 +238,26 @@ export default function RescueFeedScreen() {
       if (selectedReport?._id === refreshedReport._id) setSelectedReport(refreshedReport);
 
       if (refreshedReport?.assignedVolunteer?.uid !== currentFirebaseUser.uid) {
-        Alert.alert('Unable to accept', rescueAlreadyClaimedMessage);
+        openStatusModal({
+          type: 'warning',
+          title: 'Unable to accept',
+          message: rescueAlreadyClaimedMessage,
+        });
         return;
       }
 
-      Alert.alert('Accepted', 'You are now assigned to this rescue.');
+      openStatusModal({
+        type: 'success',
+        title: 'Accepted',
+        message: 'You are now assigned to this rescue.',
+      });
     } catch (error) {
-      Alert.alert('Unable to accept', error.message || 'Please try again.');
+      const apiError = normalizeApiError(error, { fallbackMessage: 'Please try again.' });
+      openStatusModal({
+        type: 'error',
+        title: 'Unable to accept',
+        message: apiError.message,
+      });
     }
   };
 
@@ -271,16 +322,24 @@ export default function RescueFeedScreen() {
     }
   };
 
-  if (loading) {
-    return (
-      <View style={styles.screen}>
-        <LoadingState message="Loading rescue alerts..." />
-      </View>
-    );
-  }
-
   return (
     <View style={styles.screen}>
+      <LoadingOverlay visible={loading} title="Loading Dashboard" message="Loading rescue alerts..." />
+      <StatusModal
+        visible={statusModalVisible}
+        type={statusModalConfig.type}
+        title={statusModalConfig.title}
+        message={statusModalConfig.message}
+        primaryButton={
+          statusModalConfig.primaryButton || {
+            label: 'OK',
+            onPress: closeStatusModal,
+            variant: 'primary',
+          }
+        }
+        secondaryButton={statusModalConfig.secondaryButton}
+        onRequestClose={closeStatusModal}
+      />
       {/* ── Compact header ─────────────────────────────────── */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>

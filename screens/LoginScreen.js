@@ -2,15 +2,87 @@ import { useState } from 'react';
 import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
+import LoadingOverlay from '../components/ui/LoadingOverlay';
+import StatusModal from '../components/ui/StatusModal';
+import { normalizeApiError } from '../utils/apiErrorHandler';
+
+function normalizeFirebaseAuthError(error) {
+  const code = String(error?.code || '').toLowerCase();
+
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+      return {
+        type: 'error',
+        title: 'Login Failed',
+        message: 'Invalid email or password.',
+      };
+    case 'auth/too-many-requests':
+      return {
+        type: 'warning',
+        title: 'Too Many Attempts',
+        message: 'Too many login attempts. Please try again later.',
+      };
+    case 'auth/network-request-failed':
+      return {
+        type: 'error',
+        title: 'No Internet Connection',
+        message: 'No internet connection.',
+      };
+    case 'auth/invalid-email':
+      return {
+        type: 'warning',
+        title: 'Invalid Email',
+        message: 'Please enter a valid email address.',
+      };
+    case 'auth/user-disabled':
+      return {
+        type: 'error',
+        title: 'Account Disabled',
+        message: 'This account has been disabled.',
+      };
+    default: {
+      const normalized = normalizeApiError(error, {
+        fallbackMessage: 'Unable to sign in right now. Please try again.',
+      });
+
+      return {
+        type: 'error',
+        title: 'Login Failed',
+        message: normalized.message || 'Unable to sign in right now. Please try again.',
+      };
+    }
+  }
+}
 
 export default function LoginScreen({ onSwitchToSignup, onLoginSuccess }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [feedbackVisible, setFeedbackVisible] = useState(false);
+  const [feedback, setFeedback] = useState({
+    type: 'info',
+    title: '',
+    message: '',
+  });
+
+  const openFeedback = (nextFeedback) => {
+    setFeedback(nextFeedback);
+    setFeedbackVisible(true);
+  };
+
+  const closeFeedback = () => {
+    setFeedbackVisible(false);
+  };
 
   const handleLogin = async () => {
     if (!email.trim() || !password) {
-      Alert.alert('Missing fields', 'Please enter email and password.');
+      openFeedback({
+        type: 'warning',
+        title: 'Missing Fields',
+        message: 'Please enter email and password.',
+      });
       return;
     }
 
@@ -19,9 +91,9 @@ export default function LoginScreen({ onSwitchToSignup, onLoginSuccess }) {
       const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
       console.log(userCredential.user.uid);
       onLoginSuccess?.();
-      Alert.alert('Success', 'Logged in successfully.');
     } catch (error) {
-      Alert.alert('Login failed', error.message);
+      const normalizedError = normalizeFirebaseAuthError(error);
+      openFeedback(normalizedError);
     } finally {
       setLoading(false);
     }
@@ -29,6 +101,23 @@ export default function LoginScreen({ onSwitchToSignup, onLoginSuccess }) {
 
   return (
     <View style={styles.container}>
+      <LoadingOverlay
+        visible={loading}
+        title="Signing In"
+        message="Please wait while we verify your account."
+      />
+      <StatusModal
+        visible={feedbackVisible}
+        type={feedback.type}
+        title={feedback.title}
+        message={feedback.message}
+        primaryButton={{
+          label: 'OK',
+          onPress: closeFeedback,
+          variant: 'primary',
+        }}
+        onRequestClose={closeFeedback}
+      />
       <View style={styles.hero}>
         <Text style={styles.kicker}>FEEL Rescue</Text>
         <Text style={styles.title}>Welcome Back</Text>
@@ -59,7 +148,7 @@ export default function LoginScreen({ onSwitchToSignup, onLoginSuccess }) {
         onPress={handleLogin}
         disabled={loading}
       >
-        <Text style={styles.buttonText}>{loading ? 'Signing in...' : 'Log In'}</Text>
+        <Text style={styles.buttonText}>Log In</Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={onSwitchToSignup} disabled={loading}>

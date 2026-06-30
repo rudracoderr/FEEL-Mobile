@@ -99,11 +99,23 @@ function extractMessage(error, fallbackMessage = '') {
     return responseMessage;
   }
 
-  if (typeof error === 'string' && error.trim()) {
+  const isRawSystemError = (msg) => {
+    if (!msg) return false;
+    const lower = msg.toLowerCase();
+    return (
+      lower.includes('abort') ||
+      lower.includes('network request failed') ||
+      lower.includes('failed to fetch') ||
+      lower === 'network error' ||
+      lower.includes('networkerror')
+    );
+  };
+
+  if (typeof error === 'string' && error.trim() && !isRawSystemError(error)) {
     return error.trim();
   }
 
-  if (typeof error?.message === 'string' && error.message.trim()) {
+  if (typeof error?.message === 'string' && error.message.trim() && !isRawSystemError(error.message)) {
     return error.message.trim();
   }
 
