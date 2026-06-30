@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -15,9 +14,11 @@ import { auth } from '../firebase';
 import { BACKEND_BASE_URL, fetchWithTimeout } from '../apiClient';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
-import LoadingState from '../components/ui/LoadingState';
+import LoadingOverlay from '../components/ui/LoadingOverlay';
 import MetricCard from '../components/ui/MetricCard';
 import SectionHeader from '../components/ui/SectionHeader';
+import StatusModal from '../components/ui/StatusModal';
+import { normalizeApiError } from '../utils/apiErrorHandler';
 import { colors, radius, spacing, typography } from '../theme';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,6 +108,19 @@ export default function ProfileScreen({ onLogout, currentUserProfile }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [statusModalConfig, setStatusModalConfig] = useState({
+    type: 'info',
+    title: '',
+    message: '',
+  });
+
+  const closeStatusModal = () => setStatusModalVisible(false);
+  const openStatusModal = (config) => {
+    setStatusModalConfig(config);
+    setStatusModalVisible(true);
+  };
+
   const loadProfile = async (user, isRefresh = false) => {
     if (!user) {
       setBackendUser(null);
@@ -153,6 +167,23 @@ export default function ProfileScreen({ onLogout, currentUserProfile }) {
       }
     } catch (error) {
       console.error('Failed to fetch user profile:', error);
+      const apiError = normalizeApiError(error, { fallbackMessage: 'Failed to load profile' });
+      openStatusModal({
+        type: 'error',
+        title: apiError.title,
+        message: apiError.message,
+        primaryButton: {
+          ...apiError.primaryAction,
+          onPress: apiError.primaryAction?.label === 'Try Again' ? () => {
+            closeStatusModal();
+            onRefresh();
+          } : closeStatusModal,
+        },
+        secondaryButton: apiError.secondaryAction ? {
+          ...apiError.secondaryAction,
+          onPress: closeStatusModal,
+        } : undefined,
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -189,11 +220,12 @@ export default function ProfileScreen({ onLogout, currentUserProfile }) {
     }
   }, [currentUserProfile, firebaseUser]);
 
-  const displayName = backendUser?.fullName || firebaseUser?.email?.split('@')?.[0] || 'User';
-  const email = firebaseUser?.email || backendUser?.email || 'No email';
-  const city = backendUser?.city || 'City not set';
-  const volunteerStatus = backendUser?.volunteerStatus || (backendUser?.isVolunteer ? 'Volunteer' : 'Community Member');
-  const initial = displayName.charAt(0).toUpperCase();
+  const showSkeleton = loading && !backendUser;
+  const displayName = showSkeleton ? '' : (backendUser?.fullName || firebaseUser?.email?.split('@')?.[0] || 'User');
+  const email = showSkeleton ? '' : (firebaseUser?.email || backendUser?.email || 'No email');
+  const city = showSkeleton ? '' : (backendUser?.city || 'City not set');
+  const volunteerStatus = showSkeleton ? '' : (backendUser?.volunteerStatus || (backendUser?.isVolunteer ? 'Volunteer' : 'Community Member'));
+  const initial = displayName ? displayName.charAt(0).toUpperCase() : '';
   const metrics = useMemo(() => ({
     submitted: myReports.length,
     active: claimedReports.filter((report) => report.status === 'accepted').length,
@@ -207,33 +239,50 @@ export default function ProfileScreen({ onLogout, currentUserProfile }) {
   };
 
   const handleLogout = async () => {
-    Alert.alert('Confirm Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout',
-        onPress: () => onLogout?.(),
-        style: 'destructive',
+    openStatusModal({
+      type: 'warning',
+      title: 'Confirm Logout',
+      message: 'Are you sure you want to logout?',
+      primaryButton: {
+        label: 'Logout',
+        variant: 'danger',
+        onPress: () => {
+          closeStatusModal();
+          onLogout?.();
+        },
       },
-    ]);
+      secondaryButton: {
+        label: 'Cancel',
+        variant: 'secondary',
+        onPress: closeStatusModal,
+      },
+    });
   };
 
-  // ── Loading state ──────────────────────────────────────────────────────────
-  if (loading) {
-    return (
-      <View style={styles.screen}>
-        <LoadingState message="Loading profile..." />
-      </View>
-    );
-  }
-
   // ── Guest state ────────────────────────────────────────────────────────────
-  if (!firebaseUser) {
+  if (!firebaseUser && !loading) {
     return <GuestProfileScreen />;
   }
 
   // ── Authenticated state ────────────────────────────────────────────────────
   return (
     <View style={styles.screen}>
+      <LoadingOverlay visible={loading} title="Loading Profile" message="Fetching your details..." />
+      <StatusModal
+        visible={statusModalVisible}
+        type={statusModalConfig.type}
+        title={statusModalConfig.title}
+        message={statusModalConfig.message}
+        primaryButton={
+          statusModalConfig.primaryButton || {
+            label: 'OK',
+            onPress: closeStatusModal,
+            variant: 'primary',
+          }
+        }
+        secondaryButton={statusModalConfig.secondaryButton}
+        onRequestClose={closeStatusModal}
+      />
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}

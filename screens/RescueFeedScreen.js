@@ -18,7 +18,7 @@ import { BACKEND_BASE_URL, UnauthenticatedError, fetchPublicWithTimeout, fetchWi
 import RescueCard from '../components/RescueCard';
 import RescueDetailsModal from '../components/RescueDetailsModal';
 import EmptyState from '../components/ui/EmptyState';
-import LoadingOverlay from '../components/ui/LoadingOverlay';
+import LoadingState from '../components/ui/LoadingState';
 import StatusModal from '../components/ui/StatusModal';
 import { normalizeApiError } from '../utils/apiErrorHandler';
 import { colors, radius, spacing, typography } from '../theme';
@@ -322,9 +322,16 @@ export default function RescueFeedScreen() {
     }
   };
 
+  if (loading) {
+    return (
+      <View style={styles.screen}>
+        <LoadingState message="Loading rescue alerts..." />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.screen}>
-      <LoadingOverlay visible={loading} title="Loading Dashboard" message="Loading rescue alerts..." />
       <StatusModal
         visible={statusModalVisible}
         type={statusModalConfig.type}

@@ -52,17 +52,42 @@ async function buildAuthHeaders(extraHeaders = {}) {
   };
 }
 
+/**
+ * Patches the Response object to safely parse JSON.
+ * If the response is not OK and contains plain text/HTML (like a 502 or 401),
+ * calling .json() on it directly would throw a SyntaxError.
+ * This wrapper reads .text() first and handles parsing safely.
+ */
+function makeSafeJsonResponse(response) {
+  response.json = async () => {
+    const text = await response.text();
+    try {
+      return text ? JSON.parse(text) : null;
+    } catch (error) {
+      if (response.ok) {
+        throw error;
+      }
+      // If it's an error response (4xx/5xx) and NOT valid JSON,
+      // return a safe fallback object so callers checking data.message don't crash,
+      // or throw a standard Error so global catch blocks can handle the raw text.
+      throw new Error(text || `HTTP Error ${response.status}`);
+    }
+  };
+  return response;
+}
+
 export async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const headers = await buildAuthHeaders(options.headers);
-    return await fetch(url, {
+    const response = await fetch(url, {
       ...options,
       signal: controller.signal,
       headers,
     });
+    return makeSafeJsonResponse(response);
   } finally {
     clearTimeout(timeoutId);
   }
@@ -78,7 +103,7 @@ export async function fetchPublicWithTimeout(url, options = {}, timeoutMs = REQU
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       ...options,
       signal: controller.signal,
       headers: {
@@ -86,6 +111,7 @@ export async function fetchPublicWithTimeout(url, options = {}, timeoutMs = REQU
         ...(options.headers || {}),
       },
     });
+    return makeSafeJsonResponse(response);
   } finally {
     clearTimeout(timeoutId);
   }

@@ -14,12 +14,15 @@ import { ArrowLeft, UserRound } from 'lucide-react-native';
 import { auth } from '../firebase';
 import { BACKEND_BASE_URL, fetchWithTimeout } from '../apiClient';
 import RescueDetailsModal from '../components/RescueDetailsModal';
+import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import EmptyState from '../components/ui/EmptyState';
 import LoadingState from '../components/ui/LoadingState';
 import SectionHeader from '../components/ui/SectionHeader';
 import StatusBadge from '../components/ui/StatusBadge';
+import StatusModal from '../components/ui/StatusModal';
 import SeverityBadge from '../components/ui/SeverityBadge';
+import { normalizeApiError } from '../utils/apiErrorHandler';
 import { colors, radius, spacing, typography } from '../theme';
 
 const FILTERS = ['all', 'pending', 'accepted', 'resolved'];
@@ -44,9 +47,22 @@ export default function MyReportsScreen() {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
+  const [screenError, setScreenError] = useState(null);
   const [selectedReport, setSelectedReport] = useState(null);
   const [activeFilter, setActiveFilter] = useState('all');
+
+  const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [statusModalConfig, setStatusModalConfig] = useState({
+    type: 'info',
+    title: '',
+    message: '',
+  });
+
+  const closeStatusModal = () => setStatusModalVisible(false);
+  const openStatusModal = (config) => {
+    setStatusModalConfig(config);
+    setStatusModalVisible(true);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -68,7 +84,7 @@ export default function MyReportsScreen() {
     }
 
     try {
-      setError('');
+      setScreenError(null);
       if (!isRefresh) setLoading(true);
       const response = await fetchWithTimeout(`${BACKEND_BASE_URL}/api/reports/by-reporter/${currentUserUid}`);
       const data = await response.json();
@@ -77,8 +93,33 @@ export default function MyReportsScreen() {
       }
       setReports(Array.isArray(data.reports) ? data.reports : []);
     } catch (fetchError) {
-      console.error('Failed to fetch my reports:', fetchError);
-      setError(fetchError.message || 'Failed to load your reports');
+      const apiError = normalizeApiError(fetchError, { fallbackMessage: 'Failed to load your reports' });
+      
+      if (isRefresh) {
+        openStatusModal({
+          type: 'error',
+          title: apiError.title,
+          message: apiError.message,
+          primaryButton: {
+            ...apiError.primaryAction,
+            onPress: apiError.primaryAction?.label === 'Try Again' ? () => {
+              closeStatusModal();
+              setRefreshing(true);
+              fetchMyReports(true);
+            } : closeStatusModal,
+          },
+          secondaryButton: apiError.secondaryAction ? {
+            ...apiError.secondaryAction,
+            onPress: closeStatusModal,
+          } : undefined,
+        });
+      } else {
+        setScreenError({
+          title: apiError.title,
+          message: apiError.message,
+          primaryAction: apiError.primaryAction,
+        });
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -111,6 +152,21 @@ export default function MyReportsScreen() {
 
   return (
     <View style={styles.screen}>
+      <StatusModal
+        visible={statusModalVisible}
+        type={statusModalConfig.type}
+        title={statusModalConfig.title}
+        message={statusModalConfig.message}
+        primaryButton={
+          statusModalConfig.primaryButton || {
+            label: 'OK',
+            onPress: closeStatusModal,
+            variant: 'primary',
+          }
+        }
+        secondaryButton={statusModalConfig.secondaryButton}
+        onRequestClose={closeStatusModal}
+      />
       <Header onBack={() => navigation.goBack()} count={reports.length} />
 
       <View style={styles.filterWrap}>
@@ -132,9 +188,17 @@ export default function MyReportsScreen() {
         </ScrollView>
       </View>
 
-      {error ? (
+      {screenError ? (
         <View style={styles.content}>
-          <EmptyState title="Something went wrong" message={error} />
+          <EmptyState title={screenError.title || 'Something went wrong'} message={screenError.message} />
+          {screenError.primaryAction?.label === 'Try Again' && (
+            <Button 
+              label="Try Again" 
+              onPress={() => fetchMyReports(false)} 
+              variant="primary" 
+              style={{ marginTop: spacing.xl }} 
+            />
+          )}
         </View>
       ) : filteredReports.length === 0 ? (
         <View style={styles.content}>
